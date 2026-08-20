@@ -146,10 +146,18 @@ class OctolinkShortener:
         if alias:
             params["alias"] = alias
         
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Referer": "https://octolink.vip/",
+            "Origin": "https://octolink.vip"
+        }
+        
         for attempt in range(max_retries):
             try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(self.base_url, params=params, timeout=10) as response:
+                async with aiohttp.ClientSession(headers=headers) as session:
+                    async with session.get(self.base_url, params=params, timeout=15) as response:
                         text = await response.text()
                         
                         # Check if response is HTML (error page)
