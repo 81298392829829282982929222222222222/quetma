@@ -124,18 +124,9 @@ class OctolinkShortener:
         self.api_token = api_token
         self.base_url = OCTOLINK_API_URL
     
-    async def shorten_url(self, long_url, alias=None, campaign_type=0, max_retries=3):
+    async def shorten_url(self, long_url, alias=None, campaign_type=3, max_retries=3, browser=None):
         """
-        Shorten URL using Octolink API
-        
-        Args:
-            long_url: URL to shorten
-            alias: Custom alias (optional)
-            campaign_type: 0-5 (0=no ads, 1=social, 2=google search, 3=google search 3 step, 4=google search 2 step, 5=google search 4 step)
-            max_retries: Number of retries on failure
-        
-        Returns:
-            Short link or None if error
+        Shorten URL using Octolink API with Cloudflare bypass support
         """
         params = {
             "api": self.api_token,
@@ -160,15 +151,34 @@ class OctolinkShortener:
                     async with session.get(self.base_url, params=params, timeout=15) as response:
                         text = await response.text()
                         
-                        # Check if response is HTML (error page)
-                        if text.strip().startswith('<!DOCTYPE html>') or text.strip().startswith('<html'):
+                        # Check if response is HTML (Cloudflare challenge / error page)
+                        if text.strip().startswith('<!DOCTYPE html>') or text.strip().startswith('<html') or response.status == 403:
+                            # If browser is available, fallback to real Chromium execution
+                            if browser:
+                                print(f"Cloudflare datacenter detected, using Browser API fallback (attempt {attempt + 1})...")
+                                try:
+                                    context = await browser.new_context(user_agent=headers["User-Agent"])
+                                    page = await context.new_page()
+                                    full_api_url = f"{self.base_url}?api={self.api_token}&url={long_url}&type={campaign_type}"
+                                    if alias:
+                                        full_api_url += f"&alias={alias}"
+                                    await page.goto(full_api_url, wait_until="domcontentloaded", timeout=15000)
+                                    body_text = await page.inner_text("body")
+                                    await page.close()
+                                    await context.close()
+                                    
+                                    import json
+                                    res_json = json.loads(body_text.strip())
+                                    if res_json.get("status") == "success":
+                                        return res_json.get("shortenedUrl")
+                                except Exception as be:
+                                    print(f"Browser fallback attempt failed: {be}")
+                            
                             if attempt < max_retries - 1:
-                                print(f"API returned HTML error page - retry {attempt + 1}/{max_retries}...")
                                 await asyncio.sleep(2 ** attempt)
                                 continue
                             else:
-                                print(f"API returned HTML error page - may be blocked or API has issues")
-                                print(f"Status code: {response.status}")
+                                print(f"API returned HTML error page - status {response.status}")
                                 return None
                         
                         # Handle JSON response
@@ -180,14 +190,12 @@ class OctolinkShortener:
                                 print(f"API error: {result.get('message', 'Unknown error')}")
                                 return None
                         except:
-                            # Try text response
                             if text.strip():
                                 return text.strip()
                             else:
                                 return None
             except Exception as e:
                 if attempt < max_retries - 1:
-                    print(f"Connection error - retry {attempt + 1}/{max_retries}...")
                     await asyncio.sleep(2 ** attempt)
                     continue
                 else:
@@ -393,6 +401,8 @@ class TaskScanner:
                 print("No steps enabled, skipping scan")
                 return set()
             
+            await self.init_browser()
+            
             # Generate exactly GENERATED_LINKS total, distributed among enabled steps
             all_links = []
             for i in range(GENERATED_LINKS):
@@ -401,7 +411,8 @@ class TaskScanner:
                 short_url = await self.shortener.shorten_url(
                     long_url=self.shortener.generate_random_url(),
                     alias=self.shortener.generate_random_alias(),
-                    campaign_type=STEP_CAMPAIGNS[step]
+                    campaign_type=STEP_CAMPAIGNS[step],
+                    browser=self.browser
                 )
                 if short_url:
                     print(f"✓ Link {i+1}/{GENERATED_LINKS} ({step}): {short_url}")
