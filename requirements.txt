@@ -1,0 +1,5 @@
+requests
+python-dotenv
+playwright==1.61.0
+aiohttp
+flask
